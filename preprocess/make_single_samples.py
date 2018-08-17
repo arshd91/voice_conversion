@@ -3,7 +3,8 @@ sys.path.append('../')
 from utils import Sampler
 import h5py
 import numpy as np
-import json 
+import json
+import argparse
 
 '''
     Params in accordance to paper: https://arxiv.org/abs/1804.02812
@@ -16,13 +17,17 @@ n_samples=2000000
 dset='train'
 
 if __name__ == '__main__':
-    if len(sys.argv) < 3:
-        print('usage: python3 make_single_samples.py [in_h5py_path] [out_json_path]')
-        exit(0)
-    sampler = Sampler(sys.argv[1], max_step=max_step, seg_len=seg_len, dset=dset)
+    parser = argparse.ArgumentParser(usage="""\n--dataset_path\t\th5py file used as data feeder for training phase.
+                                              \n--index_output\t\tDestination of json file of sampled indices used \
+                                              during training.""")
+    parser.add_argument('--dataset_path', default="./vctk_dataset")
+    parser.add_argument('--index_output', default="./vctk_dataset_index.json")
+    args = parser.parse_args()
+    sampler = Sampler(args.dataset_path, max_step=max_step, seg_len=seg_len, dset=dset)
     samples = [sampler.sample_single()._asdict() for _ in range(n_samples)]
-    with open(sys.argv[2], 'w') as f_json:
+    with open(args.index_output, 'w') as f_json:
         json.dump(samples, f_json, indent=4, separators=(',', ': '))
+
 
 
 

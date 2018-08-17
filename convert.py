@@ -16,8 +16,10 @@ from scipy.io.wavfile import write
 import h5py 
 import os 
 import soundfile as sf
-#import pysptk
-#import pyworld as pw
+import pysptk
+import pyworld as pw
+import sys
+import argparse
 
 def sp2wav(sp): 
     #exp_sp = np.exp(sp)
@@ -71,7 +73,7 @@ def convert_mc(mc, c, solver, gen=True):
     converted_mc = converted_mc.squeeze(axis=0).transpose((1, 0))
     return converted_mc
 
-def get_model(hps_path='./hps/vcc.json', model_path='/storage/model/voice_conversion/vctk/clf/model.pkl-109999'):
+def get_model(hps_path='./hps/vctk.json', model_path='/storage/model/voice_conversion/vctk/clf/model.pkl-109999'):
     hps = Hps()
     hps.load(hps_path)
     hps_tuple = hps.get_tuple()
@@ -80,7 +82,7 @@ def get_model(hps_path='./hps/vcc.json', model_path='/storage/model/voice_conver
     return solver
 
 def convert_all_sp(h5_path, src_speaker, tar_speaker, gen=True, 
-        dset='test', speaker_used_path='./speakers_used.txt',
+        dset='test', speaker_used_path='./vctk_20_speakers_used.txt',
         root_dir='/storage/result/voice_conversion/vctk/p226_to_p225/',
         model_path='/storage/model/voice_conversion/vctk/clf/wo_tanh/model_0.001.pkl-79999'):
     # read speaker id file
@@ -88,6 +90,7 @@ def convert_all_sp(h5_path, src_speaker, tar_speaker, gen=True,
     tar_speaker = tar_speaker[:-1]
     with open(speaker_used_path) as f:
         speakers = [line.strip() for line in f]
+        speaker2gender = {speaker[:-1]:speaker[-1] for speaker in speakers}
         speaker2id = {speaker[:-1]:i for i, speaker in enumerate(speakers)}
     solver = get_model(hps_path='hps/vctk.json',
             model_path=model_path)
@@ -96,7 +99,7 @@ def convert_all_sp(h5_path, src_speaker, tar_speaker, gen=True,
             sp = f_h5[f'{dset}/{src_speaker}/{utt_id}/lin'][()]
             converted_sp = convert_sp(sp, speaker2id[tar_speaker], solver, gen=gen)
             wav_data = sp2wav(converted_sp)
-            wav_path = os.path.join(root_dir, f'{src_speaker}_{tar_speaker}_{utt_id}.wav')
+            wav_path = os.path.join(root_dir, f'{src_speaker}{speaker2gender[src_speaker]}_{tar_speaker}{speaker2gender[tar_speaker]}_{utt_id}.wav')
             sf.write(wav_path, wav_data, 16000, 'PCM_24')
 
 def convert_all_mc(h5_path, src_speaker, tar_speaker, gen=False, 
@@ -118,21 +121,61 @@ def convert_all_mc(h5_path, src_speaker, tar_speaker, gen=False,
 
 if __name__ == '__main__':
 
-    root_dir = './results/'
-    h5_path = '/media/arshsing/Storage/ML/ObEn/code/vctk-multi-target-imp/voice_conversion/vctk_random20_setok2.h5'
-    model_path = '/media/arshsing/Storage/ML/ObEn/code/models/single_sample_model.pkl-149999'
-    speaker_used_path = './speakers_used.txt'
+    parser = argparse.ArgumentParser(usage="""\n--results_dir\t\tDestination folder for converted speech.
+                                              \n--dataset_path\t\th5py file used as data feeder for training phase.
+                                              \n--model_path\t\tPath to model file.
+                                              \n--speakers_used\t\tSpeakers list generated along with h5py file.""")
+    parser.add_argument('--results_dir', default="./converted_utt",)
+    parser.add_argument('--dataset_path', default="./vctk_20.h5")
+    parser.add_argument('--model_path', default="./.model_single_sample.pkl-1")
+    parser.add_argument('--speakers_used', default="./speakers_used.txt")
+    parser.add_argument('--one', default=False)
+    parser.add_argument('--all', default=True)
+    parser.add_argument('--source', default=True)
+    parser.add_argument('--target', default=True)
+    args = parser.parse_args()
 
+    root_dir = args.results_dir
+    h5_path = args.dataset_path
+    model_path = args.model_path
+    speaker_used_path = args.speakers_used
+    one_pair = True if args.one == "true" or args.one == "True" else False
+    all_pairs = True if args.all == "true" or args.all == "True" else False
+    sourceSpeaker = args.source
+    targetSpeaker = args.target
+    speakers = []
     with open(speaker_used_path) as f:
         speakers = [line.strip() for line in f]
-    for speaker_A in speakers:
-       for speaker_B in speakers:
-           if speaker_A == speaker_B:
-               continue
-           else:
-               dir_path = os.path.join(root_dir, f'p{speaker_A}_p{speaker_B}')
-               if not os.path.exists(dir_path):
-                   os.makedirs(dir_path)
-               convert_all_sp(h5_path,speaker_A,speaker_B,
+
+    speakers_wo_gender = [speaker[:-1] for speaker in speakers]
+    speaker2gender = {speaker[:-1]:speaker[-1] for speaker in speakers}
+
+    if all_pairs is True:
+        for speaker_A in speakers:
+           for speaker_B in speakers:
+               if speaker_A == speaker_B:
+                   continue
+               else:
+                   dir_path = os.path.join(root_dir, f'p{speaker_A}_p{speaker_B}')
+                   if not os.path.exists(dir_path):
+                       os.makedirs(dir_path)
+                   print(f'Generating converted audio from p{speaker_A} to p{speaker_B}')
+                   convert_all_sp(h5_path,speaker_A,speaker_B,
+                           root_dir=dir_path,
+                           gen=True, model_path=model_path, speaker_used_path=speaker_used_path)
+    elif one_pair is True and sourceSpeaker is not "" and targetSpeaker is not "":
+        if sourceSpeaker not in speakers_wo_gender and targetSpeaker not in speakers_wo_gender:
+            print("Source and Target not in seen data during training.....\nAborting....")
+            exit(-1)
+        dir_path = os.path.join(root_dir, f'p{sourceSpeaker}{speaker2gender[sourceSpeaker]}_p{targetSpeaker}{speaker2gender[targetSpeaker]}')
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+
+        print(f'Generating converted audio from p{sourceSpeaker}{speaker2gender[sourceSpeaker]}_p{targetSpeaker}{speaker2gender[targetSpeaker]}')
+        speaker_A = sourceSpeaker+speaker2gender[sourceSpeaker]
+        speaker_B = targetSpeaker+speaker2gender[targetSpeaker]
+        convert_all_sp(h5_path, speaker_A, speaker_B,
                        root_dir=dir_path,
                        gen=True, model_path=model_path)
+
+

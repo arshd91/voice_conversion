@@ -5,13 +5,12 @@ import os
 import glob
 import re
 from collections import defaultdict
-#from tacotron.audio import load_wav, spectrogram, melspectrogram
 from tacotron.norm_utils import get_spectrograms
-from tacotron.mcep import wav2mcep
 import json
 import pickle
 import random
-
+from tacotron.mcep import wav2mcep
+import argparse
 
 '''
 Samples N specfied speakers from the VCTK datset and then computes the linear spectogram inh5py fotmat.
@@ -23,6 +22,7 @@ male_ids = []
 accents = defaultdict(list)
 
 class Speaker(json.JSONEncoder):
+    '''TODO: Make this class Json-able.'''
     global female_ids, accents, male_ids
     def __init__(self,id,files,gender,accent):
         self.id = str(id)
@@ -41,9 +41,6 @@ class Speaker(json.JSONEncoder):
 
 def getFileList(dir_path, extension):
     return list(glob.glob(str(dir_path)+"/*."+str(extension)))
-
-#root_dir='/media/arshsing/Storage/ML/_tensorflow3/VCTK-Corpus/wav48'
-#train_split=0.9
 
 def getSpeakerIdDict(speaker_info_txt_path):
     speakers_info = defaultdict(Speaker)
@@ -102,14 +99,23 @@ Male VCTK Speaker Ids = ['226', '227', '232', '237', '241', '243', '245', '246',
 '''
 
 if __name__ == '__main__':
-    if len(sys.argv) < 4:
-        print('usage: python3 make_dataset_vctk.py [N_speakers] [output h5py_path] [vctl_speaker_info_path] [VCTK wav48 wav files directory path]')
-        exit(0)
-    N_speakers = int(sys.argv[1])
-    h5py_path=sys.argv[2]
+
+    parser = argparse.ArgumentParser(usage="""\n--N_speakers\t\tNumber of speakers to consider for training: must be even.
+                                                  \n--dataset_output\t\toutput h5 file used as data feeder for training phase.
+                                                  \n--vctk_info\t\tPath to VCTK Speaker-info txt.
+                                                  \n--vctk_wav\t\tPath to VCTK Audio files.
+                                                  \nOutput: h5 dataset, speakers_used.txt (with gender).""")
+    parser.add_argument('--N_speakers', default=20)
+    parser.add_argument('--dataset_output', default="./vctk_dataset.h5")
+    parser.add_argument('--vctk_info')
+    parser.add_argument('--vctk_wav')
+    args = parser.parse_args()
+
+    N_speakers = int(args.N_speakers)
+    h5py_path = args.dataset_output
     h5py_name = h5py_path.split('/')[-1].split('.')[0]
-    vctk_speakerInfo_path = sys.argv[3]
-    root_dir = sys.argv[4]
+    vctk_speakerInfo_path = args.vctk_info
+    root_dir = args.vctk_wav
     #accent2speaker = read_speaker_info(vctk_speaker_path)
 
     speaker_info, speaker_id_by_gender = getSpeakerIdDict(vctk_speakerInfo_path)
@@ -124,13 +130,13 @@ if __name__ == '__main__':
 
     filename_groups = defaultdict(lambda : [])
     speaker_list, females, males = sample_speakerIds(female_ids, male_ids, N_speakers)
-    print(f'Using randomnly sampled ids:{speaker_list}\nFemales:{females},\nMales{males}')
+    print(f'Randomnly sampled ids:{speaker_list}\nFemales:{females},\nMales{males}')
     with h5py.File(h5py_path, 'w') as f_h5:
         filenames = sorted(glob.glob(os.path.join(root_dir, '*/*.wav')))
         for filename in filenames:
             # divide into groups
             sub_filename = filename.strip().split('/')[-1]
-            # format: p{speaker}_{sid}.wav
+            # format: p{speaker}_{utt_id}.wav
             speaker_id, utt_id = re.match(r'p(\d+)_(\d+)\.wav', sub_filename).groups()
             filename_groups[speaker_id].append(filename)
         for speaker_id, filenames in filename_groups.items():
@@ -149,17 +155,21 @@ if __name__ == '__main__':
                 #mel_spec = melspectrogram(wav_data).astype(np.float32).T
                 mel_spec, lin_spec = get_spectrograms(filename)
                 f0, ap, mc = wav2mcep(filename)
+                log_f0 = np.log(f0 + 1e-10)
                 #eps = 1e-10
                 #log_mel_spec, log_lin_spec = np.log(mel_spec+eps), np.log(lin_spec+eps)
                 if i < train_size:
                     datatype = 'train'
                 else:
                     datatype = 'test'
-                f_h5.create_dataset(f'{datatype}/{speaker_id}/{utt_id}/mel', \
-                    data=mel_spec, dtype=np.float32)
-                f_h5.create_dataset(f'{datatype}/{speaker_id}/{utt_id}/lin', \
-                    data=lin_spec, dtype=np.float32)
+                f_h5.create_dataset(f'{datatype}/{speaker_id}/{utt_id}/mel', data=mel_spec, dtype=np.float32)
+                f_h5.create_dataset(f'{datatype}/{speaker_id}/{utt_id}/lin', data=lin_spec, dtype=np.float32)
+                f_h5.create_dataset(f'{datatype}/{speaker_id}/{utt_id}/log_f0', data=log_f0, dtype=np.float32)
+                f_h5.create_dataset(f'{datatype}/{speaker_id}/{utt_id}/mc', data=mc, dtype=np.float32)
+
+
     with open(h5py_name+'_speakers_used.txt','w') as su_f:
+        # append gender to speaker_id for easy reference later-on
         for f_id in females:
             su_f.write(f_id + "F\n")
         for m_id in males:
